@@ -13,7 +13,6 @@
     "db:seed": "tsx src/db/seed.ts"
   },
   "dependencies": {
-    "@google/generative-ai": "^0.24.0",
     "@carousel-forge/types": "workspace:*",
     "@carousel-forge/config": "workspace:*",
     "fastify": "^5.2.0",

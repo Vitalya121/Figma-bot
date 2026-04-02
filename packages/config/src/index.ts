@@ -23,8 +23,8 @@ export const config = {
     url: env('REDIS_URL'),
   },
 
-  gemini: {
-    apiKey: env('GEMINI_API_KEY'),
+  openrouter: {
+    apiKey: env('OPENROUTER_API_KEY'),
   },
 
   figma: {
@@ -33,7 +33,7 @@ export const config = {
   },
 
   unsplash: {
-    accessKey: env('UNSPLASH_ACCESS_KEY'),
+    accessKey: envOptional('UNSPLASH_ACCESS_KEY', 'placeholder'),
   },
 
   pexels: {
@@ -47,7 +47,7 @@ export const config = {
   },
 
   stripe: {
-    secretKey: env('STRIPE_SECRET_KEY'),
+    secretKey: envOptional('STRIPE_SECRET_KEY', 'placeholder'),
     webhookSecret: envOptional('STRIPE_WEBHOOK_SECRET'),
   },
 

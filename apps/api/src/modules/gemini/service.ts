@@ -1,12 +1,35 @@
-import { GoogleGenerativeAI } from '@google/generative-ai'
 import { config } from '@carousel-forge/config'
 import type { CarouselSlide } from '@carousel-forge/types'
 
-const genAI = new GoogleGenerativeAI(config.gemini.apiKey)
+const OPENROUTER_API = 'https://openrouter.ai/api/v1/chat/completions'
+
+async function openRouterRequest(
+  model: string,
+  messages: { role: string; content: string }[],
+): Promise<string> {
+  const res = await fetch(OPENROUTER_API, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${config.openrouter.apiKey}`,
+    },
+    body: JSON.stringify({ model, messages }),
+  })
+
+  if (!res.ok) {
+    const body = await res.text()
+    throw new Error(`OpenRouter API error ${res.status}: ${body}`)
+  }
+
+  const data = (await res.json()) as {
+    choices: { message: { content: string } }[]
+  }
+  return data.choices[0].message.content
+}
 
 export class GeminiService {
-  private model = genAI.getGenerativeModel({ model: 'gemini-2.0-flash' })
-  private imageModel = genAI.getGenerativeModel({ model: 'imagen-3.0-generate-002' })
+  private textModel = 'google/gemini-2.0-flash-001'
+  private imageModel = 'google/nano-banana-2'
 
   async generateSlides(
     topic: string,
@@ -33,8 +56,9 @@ For each slide provide:
 Return ONLY a JSON array:
 [{"index":1,"title":"...","body":"...","imageKeywords":["...","..."]}]`
 
-    const result = await this.model.generateContent(prompt)
-    const text = result.response.text()
+    const text = await openRouterRequest(this.textModel, [
+      { role: 'user', content: prompt },
+    ])
     const jsonMatch = text.match(/\[[\s\S]*\]/)
     if (!jsonMatch) throw new Error('Failed to parse AI response')
 
@@ -42,24 +66,23 @@ Return ONLY a JSON array:
   }
 
   async generateImagePrompt(slideTitle: string, slideBody: string): Promise<string> {
-    const result = await this.model.generateContent(
-      `Generate a short image generation prompt (max 30 words) for a photo that would fit an Instagram carousel slide with title "${slideTitle}" and text "${slideBody}". The image should be modern, high quality, suitable for social media. Return ONLY the prompt text, nothing else.`,
-    )
-    return result.response.text().trim()
+    const text = await openRouterRequest(this.textModel, [
+      {
+        role: 'user',
+        content: `Generate a short image generation prompt (max 30 words) for a photo that would fit an Instagram carousel slide with title "${slideTitle}" and text "${slideBody}". The image should be modern, high quality, suitable for social media. Return ONLY the prompt text, nothing else.`,
+      },
+    ])
+    return text.trim()
   }
 
   async generateImage(prompt: string): Promise<string> {
-    try {
-      const result = await this.imageModel.generateContent(prompt)
-      const response = result.response
-      const candidates = response.candidates
-      if (candidates && candidates[0]?.content?.parts?.[0]?.inlineData) {
-        return candidates[0].content.parts[0].inlineData.data as string
-      }
-      throw new Error('No image data in response')
-    } catch (error) {
-      console.warn('Image generation failed, will use stock photo:', error)
-      throw error
-    }
+    const text = await openRouterRequest(this.imageModel, [
+      {
+        role: 'user',
+        content: `Generate an image: ${prompt}`,
+      },
+    ])
+    // OpenRouter image models return base64 or URL depending on model
+    return text
   }
 }
