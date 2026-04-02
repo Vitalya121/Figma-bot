@@ -1,26 +1,15 @@
 'use client'
 
 import { useState, useRef, useCallback } from 'react'
-import { ArrowLeft, ArrowRight, Loader2, Download, RefreshCw, Upload, X, Image as ImageIcon, Copy, Check, ChevronLeft, ChevronRight } from 'lucide-react'
+import { ArrowLeft, ArrowRight, Loader2, Download, RefreshCw, Upload, X, Image as ImageIcon, Copy, Check, ChevronLeft, ChevronRight, FileDown } from 'lucide-react'
 import { SlideEditor } from '@/components/slide-editor'
 import { GenerationProgress } from '@/components/generation-progress'
-import { SlideRenderer, TEMPLATE_STYLES } from '@/components/slide-renderer'
-import type { TemplateStyle } from '@/components/slide-renderer'
+import { SlideRenderer, TEMPLATE_STYLES, slideToSVG } from '@/components/slide-renderer'
+import type { SlideData, TemplateStyle } from '@/components/slide-renderer'
 import { cn } from '@/lib/utils'
 import { api } from '@/lib/api'
 
-interface Slide {
-  index: number
-  title: string
-  body: string
-  imageKeywords: string[]
-}
-
-const TEMPLATES = Object.values(TEMPLATE_STYLES).map((t, i) => ({
-  ...t,
-  isPro: i >= 5,
-  category: ['minimal', 'vibrant', 'dark', 'corporate', 'lifestyle', 'vibrant', 'minimal', 'dark'][i] ?? 'dark',
-}))
+const TEMPLATES = Object.values(TEMPLATE_STYLES)
 
 export default function CreatePage() {
   const [step, setStep] = useState(1)
@@ -30,8 +19,8 @@ export default function CreatePage() {
   const [slideCount, setSlideCount] = useState(7)
   const [tone, setTone] = useState('expert')
   const [language, setLanguage] = useState('ru')
-  const [slides, setSlides] = useState<Slide[]>([])
-  const [selectedTemplate, setSelectedTemplate] = useState('')
+  const [slides, setSlides] = useState<SlideData[]>([])
+  const [selectedTemplate, setSelectedTemplate] = useState('modern-dark')
   const [isGenerating, setIsGenerating] = useState(false)
   const [generationStage, setGenerationStage] = useState('')
   const [generationProgress, setGenerationProgress] = useState(0)
@@ -42,6 +31,7 @@ export default function CreatePage() {
   const [isExporting, setIsExporting] = useState(false)
   const [activeSlide, setActiveSlide] = useState(0)
   const fileInputRef = useRef<HTMLInputElement>(null)
+  const slideImageInputRef = useRef<HTMLInputElement>(null)
   const slideRefs = useRef<(HTMLDivElement | null)[]>([])
 
   const generateText = async () => {
@@ -50,16 +40,10 @@ export default function CreatePage() {
 
     if (mode === 'text') {
       const parts = customText.split(/\n---\n|\n\n\n/).filter(Boolean)
-      const parsed: Slide[] = parts.map((part, i) => {
+      setSlides(parts.map((part, i) => {
         const lines = part.trim().split('\n')
-        return {
-          index: i + 1,
-          title: lines[0]?.replace(/^#+\s*/, '') ?? '',
-          body: lines.slice(1).join('\n').trim(),
-          imageKeywords: lines[0]?.split(' ').slice(0, 3) ?? [],
-        }
-      })
-      setSlides(parsed)
+        return { index: i + 1, title: lines[0]?.replace(/^#+\s*/, '') ?? '', body: lines.slice(1).join('\n').trim(), imageKeywords: [] }
+      }))
       setIsGenerating(false)
       setStep(2)
       return
@@ -70,9 +54,7 @@ export default function CreatePage() {
       if (result.success && result.data) {
         setSlides(result.data)
         setStep(2)
-      } else {
-        setError('Не удалось сгенерировать текст')
-      }
+      } else setError('Не удалось сгенерировать текст')
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Ошибка генерации')
     } finally {
@@ -88,26 +70,47 @@ export default function CreatePage() {
     reader.readAsDataURL(file)
   }
 
-  const templateStyle: TemplateStyle = TEMPLATE_STYLES[selectedTemplate] ?? TEMPLATE_STYLES['dark-elegant']
+  const handleSlideImageUpload = (slideIndex: number) => {
+    const input = document.createElement('input')
+    input.type = 'file'
+    input.accept = 'image/*'
+    input.onchange = (e) => {
+      const file = (e.target as HTMLInputElement).files?.[0]
+      if (!file) return
+      const reader = new FileReader()
+      reader.onload = (ev) => {
+        const updated = [...slides]
+        updated[slideIndex] = { ...updated[slideIndex], backgroundImage: ev.target?.result as string }
+        setSlides(updated)
+      }
+      reader.readAsDataURL(file)
+    }
+    input.click()
+  }
+
+  const removeSlideImage = (slideIndex: number) => {
+    const updated = [...slides]
+    updated[slideIndex] = { ...updated[slideIndex], backgroundImage: undefined }
+    setSlides(updated)
+  }
+
+  const templateStyle: TemplateStyle = TEMPLATE_STYLES[selectedTemplate] ?? TEMPLATE_STYLES['modern-dark']
 
   const startGeneration = async () => {
     setStep(4)
     setIsDone(false)
-
     const stages = [
-      { id: 'generating_text', progress: 15, delay: 1000 },
-      { id: 'finding_photos', progress: 35, delay: 1500 },
-      { id: 'generating_images', progress: 60, delay: 2000 },
-      { id: 'creating_figma', progress: 85, delay: 1500 },
+      { id: 'generating_text', progress: 20, delay: 800 },
+      { id: 'finding_photos', progress: 40, delay: 1200 },
+      { id: 'generating_images', progress: 65, delay: 1500 },
+      { id: 'creating_figma', progress: 90, delay: 1000 },
       { id: 'completed', progress: 100, delay: 500 },
     ]
-
     for (const stage of stages) {
       setGenerationStage(stage.id)
       setGenerationProgress(stage.progress)
       await new Promise((r) => setTimeout(r, stage.delay))
     }
-
     setIsDone(true)
   }
 
@@ -116,19 +119,16 @@ export default function CreatePage() {
     const el = slideRefs.current[index]
     if (!el) return null
     const dataUrl = await toPng(el, { width: 1080, height: 1350, pixelRatio: 1 })
-    const res = await fetch(dataUrl)
-    return res.blob()
+    return (await fetch(dataUrl)).blob()
   }, [])
 
   const downloadSlide = async (index: number) => {
     const blob = await exportSlide(index)
     if (!blob) return
-    const url = URL.createObjectURL(blob)
     const a = document.createElement('a')
-    a.href = url
+    a.href = URL.createObjectURL(blob)
     a.download = `slide-${index + 1}.png`
     a.click()
-    URL.revokeObjectURL(url)
   }
 
   const downloadAll = async () => {
@@ -136,92 +136,85 @@ export default function CreatePage() {
     try {
       const JSZip = (await import('jszip')).default
       const zip = new JSZip()
-
       for (let i = 0; i < slides.length; i++) {
         const blob = await exportSlide(i)
-        if (blob) {
-          zip.file(`slide-${i + 1}.png`, blob)
-        }
+        if (blob) zip.file(`slide-${i + 1}.png`, blob)
       }
-
       const content = await zip.generateAsync({ type: 'blob' })
-      const url = URL.createObjectURL(content)
       const a = document.createElement('a')
-      a.href = url
+      a.href = URL.createObjectURL(content)
       a.download = `carousel-${topic.slice(0, 30).replace(/\s+/g, '-') || 'slides'}.zip`
       a.click()
-      URL.revokeObjectURL(url)
-    } finally {
-      setIsExporting(false)
-    }
+    } finally { setIsExporting(false) }
+  }
+
+  const downloadFigmaSVG = () => {
+    const JSZipPromise = import('jszip')
+    JSZipPromise.then(async ({ default: JSZip }) => {
+      const zip = new JSZip()
+      for (const slide of slides) {
+        const svg = slideToSVG(slide, slides.length, templateStyle)
+        zip.file(`slide-${slide.index}.svg`, svg)
+      }
+      const content = await zip.generateAsync({ type: 'blob' })
+      const a = document.createElement('a')
+      a.href = URL.createObjectURL(content)
+      a.download = `figma-carousel-${topic.slice(0, 30).replace(/\s+/g, '-') || 'slides'}.zip`
+      a.click()
+    })
   }
 
   const copySlides = () => {
-    const text = slides.map((s) => `# Слайд ${s.index}\n**${s.title}**\n${s.body}`).join('\n\n---\n\n')
-    navigator.clipboard.writeText(text)
+    navigator.clipboard.writeText(slides.map((s) => `# Слайд ${s.index}\n**${s.title}**\n${s.body}`).join('\n\n---\n\n'))
     setCopied(true)
     setTimeout(() => setCopied(false), 2000)
   }
 
   const reset = () => {
-    setStep(1)
-    setSlides([])
-    setSelectedTemplate('')
-    setIsDone(false)
-    setTopic('')
-    setGenerationStage('')
-    setGenerationProgress(0)
-    setReferenceImage(null)
-    setError('')
-    setActiveSlide(0)
+    setStep(1); setSlides([]); setSelectedTemplate('modern-dark'); setIsDone(false)
+    setTopic(''); setGenerationStage(''); setGenerationProgress(0)
+    setReferenceImage(null); setError(''); setActiveSlide(0)
   }
 
   return (
-    <div className="max-w-3xl mx-auto px-6 py-10">
-      {/* Step indicator */}
+    <div className="max-w-4xl mx-auto px-6 py-10">
+      {/* Steps */}
       <div className="flex items-center gap-2 mb-10">
-        {['Контент', 'Редактирование', 'Шаблон', 'Результат'].map((label, i) => (
+        {['Контент', 'Редактирование', 'Дизайн', 'Результат'].map((label, i) => (
           <div key={label} className="flex items-center gap-2">
-            <div className={cn(
-              'w-8 h-8 rounded-full flex items-center justify-center text-sm font-medium',
+            <div className={cn('w-8 h-8 rounded-full flex items-center justify-center text-sm font-medium',
               step > i + 1 && 'bg-green-500/20 text-green-400',
               step === i + 1 && 'bg-primary text-white',
-              step < i + 1 && 'bg-surface-lighter text-text-muted',
-            )}>
+              step < i + 1 && 'bg-surface-lighter text-text-muted')}>
               {step > i + 1 ? '✓' : i + 1}
             </div>
-            <span className={cn('text-sm hidden sm:block', step === i + 1 ? 'text-text' : 'text-text-muted')}>
-              {label}
-            </span>
+            <span className={cn('text-sm hidden sm:block', step === i + 1 ? 'text-text' : 'text-text-muted')}>{label}</span>
             {i < 3 && <div className="w-8 h-px bg-border" />}
           </div>
         ))}
       </div>
 
-      {/* Step 1: Content */}
+      {/* Step 1 */}
       {step === 1 && (
         <div className="space-y-6">
           <h1 className="text-2xl font-bold">Создать карусель</h1>
           <div className="flex gap-2">
-            <button onClick={() => setMode('topic')} className={cn('px-4 py-2 rounded-lg text-sm transition-colors', mode === 'topic' ? 'bg-primary text-white' : 'bg-surface-light text-text-muted')}>По теме</button>
-            <button onClick={() => setMode('text')} className={cn('px-4 py-2 rounded-lg text-sm transition-colors', mode === 'text' ? 'bg-primary text-white' : 'bg-surface-light text-text-muted')}>Свой текст</button>
+            <button onClick={() => setMode('topic')} className={cn('px-4 py-2 rounded-lg text-sm', mode === 'topic' ? 'bg-primary text-white' : 'bg-surface-light text-text-muted')}>По теме</button>
+            <button onClick={() => setMode('text')} className={cn('px-4 py-2 rounded-lg text-sm', mode === 'text' ? 'bg-primary text-white' : 'bg-surface-light text-text-muted')}>Свой текст</button>
           </div>
           {mode === 'topic' ? (
             <div>
               <label className="block text-sm text-text-muted mb-2">Тема карусели</label>
-              <input type="text" value={topic} onChange={(e: React.ChangeEvent<HTMLInputElement>) => setTopic(e.target.value)} placeholder="Например: 5 ошибок в таргетированной рекламе" maxLength={500} className="w-full bg-surface-light border border-border rounded-xl px-4 py-3 text-text placeholder:text-text-muted/40 outline-none focus:border-primary transition-colors" />
+              <input type="text" value={topic} onChange={(e: React.ChangeEvent<HTMLInputElement>) => setTopic(e.target.value)} placeholder="Например: 5 ошибок в таргетированной рекламе" maxLength={500} className="w-full bg-surface-light border border-border rounded-xl px-4 py-3 text-text placeholder:text-text-muted/40 outline-none focus:border-primary" />
             </div>
           ) : (
-            <div>
-              <label className="block text-sm text-text-muted mb-2">Текст (разделяйте слайды через ---)</label>
-              <textarea value={customText} onChange={(e: React.ChangeEvent<HTMLTextAreaElement>) => setCustomText(e.target.value)} placeholder={'Заголовок\nТекст\n---\nЗаголовок 2\nТекст 2'} rows={10} maxLength={10000} className="w-full bg-surface-light border border-border rounded-xl px-4 py-3 text-text placeholder:text-text-muted/40 outline-none focus:border-primary transition-colors resize-none font-mono text-sm" />
-            </div>
+            <textarea value={customText} onChange={(e: React.ChangeEvent<HTMLTextAreaElement>) => setCustomText(e.target.value)} placeholder="Заголовок\nТекст\n---\nЗаголовок 2" rows={8} className="w-full bg-surface-light border border-border rounded-xl px-4 py-3 text-text placeholder:text-text-muted/40 outline-none focus:border-primary resize-none font-mono text-sm" />
           )}
           <div className="grid grid-cols-3 gap-4">
             <div>
               <label className="block text-sm text-text-muted mb-2">Слайдов</label>
               <select value={slideCount} onChange={(e: React.ChangeEvent<HTMLSelectElement>) => setSlideCount(Number(e.target.value))} className="w-full bg-surface-light border border-border rounded-xl px-4 py-3 text-text outline-none focus:border-primary">
-                {[5, 7, 10, 12, 15].map((n) => <option key={n} value={n}>{n}</option>)}
+                {[5, 7, 10].map((n) => <option key={n} value={n}>{n}</option>)}
               </select>
             </div>
             <div>
@@ -241,13 +234,13 @@ export default function CreatePage() {
             </div>
           </div>
           {error && <div className="bg-red-500/10 border border-red-500/30 rounded-xl px-4 py-3 text-red-400 text-sm">{error}</div>}
-          <button onClick={generateText} disabled={isGenerating || (mode === 'topic' ? !topic : !customText)} className="w-full bg-primary hover:bg-primary-dark disabled:opacity-50 text-white py-3.5 rounded-xl font-medium flex items-center justify-center gap-2 transition-colors">
-            {isGenerating ? (<><Loader2 className="w-5 h-5 animate-spin" />AI генерирует текст...</>) : (<><RefreshCw className="w-5 h-5" />Сгенерировать текст</>)}
+          <button onClick={generateText} disabled={isGenerating || (mode === 'topic' ? !topic : !customText)} className="w-full bg-primary hover:bg-primary-dark disabled:opacity-50 text-white py-3.5 rounded-xl font-medium flex items-center justify-center gap-2">
+            {isGenerating ? <><Loader2 className="w-5 h-5 animate-spin" />AI генерирует...</> : <><RefreshCw className="w-5 h-5" />Сгенерировать текст</>}
           </button>
         </div>
       )}
 
-      {/* Step 2: Edit slides */}
+      {/* Step 2: Edit */}
       {step === 2 && (
         <div className="space-y-6">
           <div className="flex items-center justify-between">
@@ -256,7 +249,7 @@ export default function CreatePage() {
           </div>
           <div className="space-y-3">
             {slides.map((slide, i) => (
-              <SlideEditor key={slide.index} index={slide.index} title={slide.title} body={slide.body} total={slides.length}
+              <SlideEditor key={i} index={slide.index} title={slide.title} body={slide.body} total={slides.length}
                 onTitleChange={(v) => { const u = [...slides]; u[i] = { ...u[i], title: v }; setSlides(u) }}
                 onBodyChange={(v) => { const u = [...slides]; u[i] = { ...u[i], body: v }; setSlides(u) }}
                 onDelete={() => setSlides(slides.filter((_, j) => j !== i).map((s, j) => ({ ...s, index: j + 1 })))}
@@ -264,83 +257,96 @@ export default function CreatePage() {
             ))}
           </div>
           <div className="flex gap-3">
-            <button onClick={() => setStep(1)} className="flex-1 border border-border hover:border-text-muted py-3 rounded-xl text-sm font-medium flex items-center justify-center gap-2 transition-colors"><ArrowLeft className="w-4 h-4" /> Назад</button>
-            <button onClick={() => setStep(3)} className="flex-1 bg-primary hover:bg-primary-dark text-white py-3 rounded-xl text-sm font-medium flex items-center justify-center gap-2 transition-colors">Далее <ArrowRight className="w-4 h-4" /></button>
+            <button onClick={() => setStep(1)} className="flex-1 border border-border py-3 rounded-xl text-sm font-medium flex items-center justify-center gap-2"><ArrowLeft className="w-4 h-4" /> Назад</button>
+            <button onClick={() => setStep(3)} className="flex-1 bg-primary text-white py-3 rounded-xl text-sm font-medium flex items-center justify-center gap-2">Далее <ArrowRight className="w-4 h-4" /></button>
           </div>
         </div>
       )}
 
-      {/* Step 3: Template + reference */}
+      {/* Step 3: Design */}
       {step === 3 && (
         <div className="space-y-6">
-          <h1 className="text-2xl font-bold">Выберите шаблон</h1>
+          <h1 className="text-2xl font-bold">Дизайн карусели</h1>
 
-          {/* Reference upload */}
+          {/* Reference */}
           <div className="bg-surface-light border border-border rounded-xl p-5">
-            <div className="flex items-center gap-3 mb-3">
+            <div className="flex items-center gap-3 mb-2">
               <Upload className="w-5 h-5 text-primary" />
-              <span className="text-sm font-medium">Загрузить референс (необязательно)</span>
+              <span className="text-sm font-medium">Референс (необязательно)</span>
             </div>
-            <p className="text-xs text-text-muted mb-3">Загрузите скриншот карусели, стиль которой хотите повторить</p>
+            <p className="text-xs text-text-muted mb-3">Загрузите скриншот для вдохновения</p>
             {referenceImage ? (
               <div className="relative inline-block">
-                <img src={referenceImage} alt="Reference" className="h-32 rounded-lg border border-border object-cover" />
-                <button onClick={() => setReferenceImage(null)} className="absolute -top-2 -right-2 w-6 h-6 bg-red-500 rounded-full flex items-center justify-center"><X className="w-3 h-3 text-white" /></button>
+                <img src={referenceImage} alt="" className="h-28 rounded-lg border border-border object-cover" />
+                <button onClick={() => { setReferenceImage(null); if (fileInputRef.current) fileInputRef.current.value = '' }} className="absolute -top-2 -right-2 w-6 h-6 bg-red-500 rounded-full flex items-center justify-center"><X className="w-3 h-3 text-white" /></button>
               </div>
             ) : (
-              <button onClick={() => fileInputRef.current?.click()} className="border-2 border-dashed border-border hover:border-primary/50 rounded-xl px-6 py-4 text-text-muted hover:text-text text-sm transition-colors flex items-center gap-2">
+              <button onClick={() => fileInputRef.current?.click()} className="border-2 border-dashed border-border hover:border-primary/50 rounded-xl px-5 py-3 text-text-muted text-sm flex items-center gap-2">
                 <ImageIcon className="w-4 h-4" />Выбрать изображение
               </button>
             )}
             <input ref={fileInputRef} type="file" accept="image/*" onChange={handleReferenceUpload} className="hidden" />
           </div>
 
-          {/* Template grid with REAL rendered previews */}
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-            {TEMPLATES.map((t) => {
-              const style = TEMPLATE_STYLES[t.id]
-              return (
+          {/* Template grid */}
+          <div>
+            <h2 className="text-sm font-medium text-text-muted mb-3">Выберите стиль</h2>
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+              {TEMPLATES.map((t) => (
                 <button key={t.id} onClick={() => setSelectedTemplate(t.id)}
                   className={cn('relative rounded-xl border-2 overflow-hidden transition-all text-left',
                     selectedTemplate === t.id ? 'border-primary shadow-lg shadow-primary/20 scale-[1.02]' : 'border-border hover:border-text-muted/30')}>
-                  {/* Mini slide render */}
                   <div className="aspect-[4/5] overflow-hidden">
-                    <div style={{
-                      width: '100%', height: '100%',
-                      background: style.bgGradient,
-                      padding: '12px',
-                      display: 'flex', flexDirection: 'column', justifyContent: 'space-between',
-                      position: 'relative',
-                    }}>
-                      <div style={{ position: 'absolute', top: 0, left: 0, right: 0, height: 3, background: style.accentColor }} />
-                      <div>
-                        <div style={{ fontSize: 9, fontWeight: 800, color: style.titleColor, lineHeight: 1.2, marginBottom: 4, marginTop: 6 }}>
-                          {slides[0]?.title?.slice(0, 35) || 'Заголовок слайда'}
-                        </div>
-                        <div style={{ fontSize: 6, color: style.bodyColor, lineHeight: 1.4 }}>
-                          {slides[0]?.body?.slice(0, 60) || 'Текст слайда будет здесь...'}
-                        </div>
-                      </div>
-                      <div style={{ fontSize: 5, color: style.numberColor }}>1/{slides.length || 7}</div>
-                    </div>
+                    <SlideRenderer
+                      slide={{ index: 1, title: slides[0]?.title?.slice(0, 30) || 'Заголовок', body: slides[0]?.body?.slice(0, 50) || 'Текст слайда...', imageKeywords: [] }}
+                      total={slides.length || 7}
+                      template={t}
+                      scale={0.155}
+                    />
                   </div>
-                  <div className="p-2.5 bg-surface-light">
-                    <div className="flex items-center justify-between">
-                      <span className="text-xs font-medium">{t.name}</span>
-                      {t.isPro && <span className="text-[10px] bg-accent/20 text-accent px-1.5 py-0.5 rounded font-medium">PRO</span>}
-                    </div>
+                  <div className="p-2 bg-surface-light">
+                    <span className="text-xs font-medium">{t.name}</span>
                   </div>
                   {selectedTemplate === t.id && (
-                    <div className="absolute top-2 right-2 w-6 h-6 bg-primary rounded-full flex items-center justify-center"><Check className="w-3 h-3 text-white" /></div>
+                    <div className="absolute top-2 right-2 w-5 h-5 bg-primary rounded-full flex items-center justify-center"><Check className="w-3 h-3 text-white" /></div>
                   )}
                 </button>
-              )
-            })}
+              ))}
+            </div>
+          </div>
+
+          {/* Per-slide images */}
+          <div>
+            <h2 className="text-sm font-medium text-text-muted mb-3">Фоновые изображения для слайдов</h2>
+            <p className="text-xs text-text-muted mb-3">Загрузите свои фото — они будут использованы как фон с затемнением</p>
+            <div className="grid grid-cols-3 sm:grid-cols-5 gap-2">
+              {slides.map((slide, i) => (
+                <div key={i} className="relative">
+                  {slide.backgroundImage ? (
+                    <div className="relative aspect-[4/5] rounded-lg overflow-hidden border border-border">
+                      <img src={slide.backgroundImage} alt="" className="w-full h-full object-cover" />
+                      <div className="absolute inset-0 bg-black/30 flex items-center justify-center opacity-0 hover:opacity-100 transition-opacity">
+                        <button onClick={() => removeSlideImage(i)} className="w-6 h-6 bg-red-500 rounded-full flex items-center justify-center"><X className="w-3 h-3 text-white" /></button>
+                      </div>
+                      <div className="absolute bottom-1 left-1 text-[10px] text-white/70 bg-black/40 px-1 rounded">{i + 1}</div>
+                    </div>
+                  ) : (
+                    <button onClick={() => handleSlideImageUpload(i)}
+                      className="w-full aspect-[4/5] rounded-lg border-2 border-dashed border-border hover:border-primary/40 flex flex-col items-center justify-center gap-1 transition-colors">
+                      <ImageIcon className="w-4 h-4 text-text-muted/40" />
+                      <span className="text-[10px] text-text-muted/40">{i + 1}</span>
+                    </button>
+                  )}
+                </div>
+              ))}
+            </div>
           </div>
 
           <div className="flex gap-3">
-            <button onClick={() => setStep(2)} className="flex-1 border border-border hover:border-text-muted py-3 rounded-xl text-sm font-medium flex items-center justify-center gap-2 transition-colors"><ArrowLeft className="w-4 h-4" /> Назад</button>
-            <button onClick={startGeneration} disabled={!selectedTemplate} className="flex-1 bg-primary hover:bg-primary-dark disabled:opacity-50 text-white py-3 rounded-xl text-sm font-medium flex items-center justify-center gap-2 transition-colors">Сгенерировать карусель <ArrowRight className="w-4 h-4" /></button>
+            <button onClick={() => setStep(2)} className="flex-1 border border-border py-3 rounded-xl text-sm font-medium flex items-center justify-center gap-2"><ArrowLeft className="w-4 h-4" /> Назад</button>
+            <button onClick={startGeneration} className="flex-1 bg-primary hover:bg-primary-dark text-white py-3 rounded-xl text-sm font-medium flex items-center justify-center gap-2">
+              Сгенерировать <ArrowRight className="w-4 h-4" />
+            </button>
           </div>
         </div>
       )}
@@ -348,9 +354,7 @@ export default function CreatePage() {
       {/* Step 4: Result */}
       {step === 4 && (
         <div className="space-y-8">
-          <h1 className="text-2xl font-bold">
-            {isDone ? 'Карусель готова!' : 'Генерация карусели...'}
-          </h1>
+          <h1 className="text-2xl font-bold">{isDone ? 'Карусель готова!' : 'Генерация...'}</h1>
 
           {!isDone && (
             <div className="bg-surface-light border border-border rounded-2xl p-8">
@@ -360,87 +364,78 @@ export default function CreatePage() {
 
           {isDone && (
             <div className="space-y-6">
-              {/* Slide carousel viewer */}
+              {/* Slide viewer */}
               <div className="bg-surface-light border border-border rounded-2xl p-6">
                 <div className="flex items-center justify-between mb-4">
                   <span className="text-sm text-text-muted">Слайд {activeSlide + 1} из {slides.length}</span>
                   <div className="flex gap-2">
-                    <button onClick={() => setActiveSlide(Math.max(0, activeSlide - 1))} disabled={activeSlide === 0}
-                      className="w-8 h-8 rounded-full border border-border hover:border-text-muted flex items-center justify-center disabled:opacity-30 transition-colors">
-                      <ChevronLeft className="w-4 h-4" />
-                    </button>
-                    <button onClick={() => setActiveSlide(Math.min(slides.length - 1, activeSlide + 1))} disabled={activeSlide === slides.length - 1}
-                      className="w-8 h-8 rounded-full border border-border hover:border-text-muted flex items-center justify-center disabled:opacity-30 transition-colors">
-                      <ChevronRight className="w-4 h-4" />
-                    </button>
+                    <button onClick={() => setActiveSlide(Math.max(0, activeSlide - 1))} disabled={activeSlide === 0} className="w-8 h-8 rounded-full border border-border flex items-center justify-center disabled:opacity-30"><ChevronLeft className="w-4 h-4" /></button>
+                    <button onClick={() => setActiveSlide(Math.min(slides.length - 1, activeSlide + 1))} disabled={activeSlide === slides.length - 1} className="w-8 h-8 rounded-full border border-border flex items-center justify-center disabled:opacity-30"><ChevronRight className="w-4 h-4" /></button>
                   </div>
                 </div>
 
-                {/* Active slide preview (scaled down) */}
                 <div className="flex justify-center">
                   <div style={{ width: 360, height: 450, overflow: 'hidden', borderRadius: 12 }} className="shadow-2xl">
-                    <SlideRenderer
-                      slide={slides[activeSlide]}
-                      total={slides.length}
-                      template={templateStyle}
-                      scale={360 / 1080}
-                    />
+                    <SlideRenderer slide={slides[activeSlide]} total={slides.length} template={templateStyle} scale={360 / 1080} />
                   </div>
                 </div>
 
-                {/* Slide thumbnails */}
+                {/* Thumbnails */}
                 <div className="flex gap-2 mt-4 overflow-x-auto pb-2">
                   {slides.map((slide, i) => (
                     <button key={i} onClick={() => setActiveSlide(i)}
                       className={cn('flex-shrink-0 rounded-lg overflow-hidden border-2 transition-all',
-                        i === activeSlide ? 'border-primary' : 'border-transparent opacity-60 hover:opacity-100')}>
-                      <div style={{ width: 54, height: 67.5, overflow: 'hidden' }}>
+                        i === activeSlide ? 'border-primary' : 'border-transparent opacity-50 hover:opacity-80')}>
+                      <div style={{ width: 54, height: 67, overflow: 'hidden' }}>
                         <SlideRenderer slide={slide} total={slides.length} template={templateStyle} scale={54 / 1080} />
                       </div>
                     </button>
                   ))}
                 </div>
 
-                {/* Download single slide */}
-                <button onClick={() => downloadSlide(activeSlide)}
-                  className="mt-3 w-full border border-border hover:border-primary py-2 rounded-lg text-sm flex items-center justify-center gap-2 transition-colors">
-                  <Download className="w-4 h-4" />
-                  Скачать этот слайд (PNG 1080x1350)
-                </button>
+                {/* Per-slide actions */}
+                <div className="flex gap-2 mt-3">
+                  <button onClick={() => downloadSlide(activeSlide)} className="flex-1 border border-border hover:border-primary py-2 rounded-lg text-xs flex items-center justify-center gap-1.5 transition-colors">
+                    <Download className="w-3.5 h-3.5" />PNG 1080×1350
+                  </button>
+                  <button onClick={() => handleSlideImageUpload(activeSlide)} className="flex-1 border border-border hover:border-primary py-2 rounded-lg text-xs flex items-center justify-center gap-1.5 transition-colors">
+                    <ImageIcon className="w-3.5 h-3.5" />{slides[activeSlide]?.backgroundImage ? 'Заменить фон' : 'Добавить фон'}
+                  </button>
+                </div>
               </div>
 
-              {/* Hidden full-size renders for export */}
+              {/* Hidden full-size for export */}
               <div style={{ position: 'absolute', left: '-9999px', top: 0 }}>
                 {slides.map((slide, i) => (
-                  <SlideRenderer
-                    key={i}
-                    ref={(el) => { slideRefs.current[i] = el }}
-                    slide={slide}
-                    total={slides.length}
-                    template={templateStyle}
-                    scale={1}
-                  />
+                  <SlideRenderer key={i} ref={(el) => { slideRefs.current[i] = el }} slide={slide} total={slides.length} template={templateStyle} scale={1} />
                 ))}
               </div>
 
-              {/* Actions */}
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              {/* Export actions */}
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
                 <button onClick={downloadAll} disabled={isExporting}
-                  className="flex items-center justify-center gap-2 bg-primary hover:bg-primary-dark disabled:opacity-50 text-white py-3.5 rounded-xl text-sm font-medium transition-colors">
+                  className="flex items-center justify-center gap-2 bg-primary hover:bg-primary-dark disabled:opacity-50 text-white py-3.5 rounded-xl text-sm font-medium">
                   {isExporting ? <Loader2 className="w-4 h-4 animate-spin" /> : <Download className="w-4 h-4" />}
-                  {isExporting ? 'Экспорт...' : `Скачать все ${slides.length} слайдов (ZIP)`}
+                  {isExporting ? 'Экспорт...' : `Скачать PNG (ZIP)`}
+                </button>
+                <button onClick={downloadFigmaSVG}
+                  className="flex items-center justify-center gap-2 border border-primary text-primary hover:bg-primary/10 py-3.5 rounded-xl text-sm font-medium">
+                  <FileDown className="w-4 h-4" />
+                  SVG для Figma
                 </button>
                 <button onClick={copySlides}
-                  className="flex items-center justify-center gap-2 border border-border hover:border-primary py-3.5 rounded-xl text-sm font-medium transition-colors">
+                  className="flex items-center justify-center gap-2 border border-border hover:border-primary py-3.5 rounded-xl text-sm font-medium">
                   {copied ? <Check className="w-4 h-4 text-green-400" /> : <Copy className="w-4 h-4" />}
                   {copied ? 'Скопировано!' : 'Копировать текст'}
                 </button>
               </div>
 
-              <div className="text-center pt-2">
-                <button onClick={reset} className="text-sm text-text-muted hover:text-text transition-colors">
-                  Создать ещё одну карусель
-                </button>
+              <p className="text-xs text-text-muted text-center">
+                SVG файлы можно импортировать в Figma через File → Import (Ctrl+Shift+K) для редактирования
+              </p>
+
+              <div className="text-center">
+                <button onClick={reset} className="text-sm text-text-muted hover:text-text">Создать ещё карусель</button>
               </div>
             </div>
           )}
