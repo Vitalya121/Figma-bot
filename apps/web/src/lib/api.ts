@@ -60,14 +60,21 @@ export const api = {
     }),
 
   generateImages: (data: {
-    slides: { index: number; title: string; body: string; imageKeywords?: string[] }[]
-    templateName?: string
+    slides: { index: number; title: string; body: string; totalSlides?: number; imageKeywords?: string[] }[]
     referenceImage?: string
   }) =>
     request<{
       success: boolean
       data: { index: number; imageUrl: string | null; status: string }[]
     }>('/api/generate/images', {
+      method: 'POST',
+      body: JSON.stringify(data),
+    }),
+
+  regenerateSlideImage: (data: {
+    slideIndex: number; totalSlides: number; title: string; bodyText: string; referenceImage?: string
+  }) =>
+    request<{ success: boolean; data: { imageUrl: string | null } }>('/api/generate/image', {
       method: 'POST',
       body: JSON.stringify(data),
     }),

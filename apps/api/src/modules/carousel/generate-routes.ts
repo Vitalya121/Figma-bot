@@ -17,22 +17,7 @@ async function openRouterText(messages: { role: string; content: string | object
   return data.choices[0].message.content
 }
 
-async function openRouterImage(prompt: string, referenceBase64?: string): Promise<string | null> {
-  const content: object[] = []
-
-  if (referenceBase64) {
-    content.push({
-      type: 'image_url',
-      image_url: { url: referenceBase64 },
-    })
-    content.push({
-      type: 'text',
-      text: `Using the attached image as a style reference, create a new background image in a similar visual style. ${prompt}`,
-    })
-  } else {
-    content.push({ type: 'text', text: prompt })
-  }
-
+async function openRouterImage(content: object[]): Promise<string | null> {
   const res = await fetch(OPENROUTER_API, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${config.openrouter.apiKey}` },
@@ -43,7 +28,7 @@ async function openRouterImage(prompt: string, referenceBase64?: string): Promis
   })
 
   if (!res.ok) {
-    console.error('Image generation failed:', res.status)
+    console.error('Image generation failed:', res.status, await res.text().catch(() => ''))
     return null
   }
 
@@ -60,7 +45,6 @@ async function openRouterImage(prompt: string, referenceBase64?: string): Promis
   if (msg?.images?.[0]?.image_url?.url) {
     return msg.images[0].image_url.url
   }
-
   return null
 }
 
@@ -76,9 +60,9 @@ const generateImagesSchema = z.object({
     index: z.number(),
     title: z.string(),
     body: z.string(),
+    totalSlides: z.number().optional(),
     imageKeywords: z.array(z.string()).optional(),
   })),
-  templateName: z.string().optional(),
   referenceImage: z.string().optional(),
 })
 
@@ -117,28 +101,63 @@ Return ONLY a JSON array:
     }
   })
 
-  // Generate background images for slides using Nano Banana Pro
+  // Generate COMPLETE slide designs using Nano Banana Pro (Variant B)
   app.post('/images', async (request, reply) => {
     const body = generateImagesSchema.parse(request.body)
     const results: { index: number; imageUrl: string | null; status: string }[] = []
+    const total = body.slides[0]?.totalSlides ?? body.slides.length
 
     for (const slide of body.slides) {
       try {
-        const keywords = slide.imageKeywords?.join(', ') ?? slide.title
-        const prompt = `Generate a professional Instagram carousel slide background image.
-Theme: "${slide.title}" — ${keywords}
-Style: Modern 2026 social media design, high quality, suitable as a background for text overlay.
-The image should be abstract/atmospheric enough that white or light text would be readable on top.
-${body.templateName ? `Visual style: ${body.templateName}` : ''}
-Portrait orientation 1080x1350.
-Return only the generated image.`
+        const isHook = slide.index === 1
+        const isCta = slide.index === total
 
-        const imageUrl = await openRouterImage(prompt, body.referenceImage)
+        const prompt = `Create a complete, ready-to-post Instagram carousel slide image (1080x1350 portrait).
+
+This is slide ${slide.index} of ${total}${isHook ? ' (FIRST SLIDE — HOOK, must grab attention)' : ''}${isCta ? ' (LAST SLIDE — CTA, call to action)' : ''}.
+
+TEXT TO INCLUDE ON THE SLIDE:
+Title: "${slide.title}"
+Body text: "${slide.body}"
+Slide number: ${slide.index}/${total}
+
+DESIGN REQUIREMENTS:
+- Professional Instagram carousel design, modern 2026 style
+- Dark background (black/dark gray/deep color)
+- Title must be large, bold, high contrast, immediately readable
+- Body text smaller but clearly legible
+- Include relevant thematic graphics, icons, or illustrations related to the topic
+- Add subtle decorative elements (geometric shapes, gradients, glows)
+- Slide number "${slide.index}/${total}" in bottom-right corner
+- Clean typography, good visual hierarchy
+- The text on the image MUST be exactly as written above, no changes, no extra text
+- All text must be in the same language as provided above
+- DO NOT add any text that is not specified above`
+
+        const content: object[] = []
+
+        // If reference image provided, include it for style matching
+        if (body.referenceImage) {
+          content.push({
+            type: 'image_url',
+            image_url: { url: body.referenceImage },
+          })
+          content.push({
+            type: 'text',
+            text: `Use the attached image as a STYLE REFERENCE. Match the visual style, color scheme, layout approach, typography style, and overall aesthetic. Create a new slide with this exact style but with the following content:\n\n${prompt}`,
+          })
+        } else {
+          content.push({ type: 'text', text: prompt })
+        }
+
+        const imageUrl = await openRouterImage(content)
         results.push({
           index: slide.index,
           imageUrl,
           status: imageUrl ? 'success' : 'fallback',
         })
+
+        app.log.info(`Slide ${slide.index}/${total}: ${imageUrl ? 'generated' : 'failed'}`)
       } catch (error) {
         console.error(`Image gen failed for slide ${slide.index}:`, error)
         results.push({ index: slide.index, imageUrl: null, status: 'error' })
@@ -151,12 +170,30 @@ Return only the generated image.`
   // Generate a single slide image
   app.post('/image', async (request, reply) => {
     const body = z.object({
-      prompt: z.string(),
+      slideIndex: z.number(),
+      totalSlides: z.number(),
+      title: z.string(),
+      bodyText: z.string(),
       referenceImage: z.string().optional(),
     }).parse(request.body)
 
     try {
-      const imageUrl = await openRouterImage(body.prompt, body.referenceImage)
+      const prompt = `Create a complete, ready-to-post Instagram carousel slide image (1080x1350 portrait).
+Slide ${body.slideIndex} of ${body.totalSlides}.
+Title: "${body.title}"
+Body: "${body.bodyText}"
+Number: ${body.slideIndex}/${body.totalSlides}
+Dark background, modern 2026 design, clean typography, thematic graphics. Text must be exactly as specified.`
+
+      const content: object[] = []
+      if (body.referenceImage) {
+        content.push({ type: 'image_url', image_url: { url: body.referenceImage } })
+        content.push({ type: 'text', text: `Match the visual style of this reference image. ${prompt}` })
+      } else {
+        content.push({ type: 'text', text: prompt })
+      }
+
+      const imageUrl = await openRouterImage(content)
       return { success: true, data: { imageUrl } }
     } catch (error) {
       return reply.status(500).send({ success: false, error: 'Image generation failed' })
