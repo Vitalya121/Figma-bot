@@ -20,53 +20,72 @@ export async function authRoutes(app: FastifyInstance) {
 
   // Google OAuth: callback
   app.get('/google/callback', async (request, reply) => {
-    const { code } = request.query as { code: string }
+    const { code, error: oauthError } = request.query as { code?: string; error?: string }
 
-    // Exchange code for tokens
-    const tokenRes = await fetch('https://oauth2.googleapis.com/token', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        code,
-        client_id: config.auth.googleClientId,
-        client_secret: config.auth.googleClientSecret,
-        redirect_uri: `${config.app.apiUrl}/api/auth/google/callback`,
-        grant_type: 'authorization_code',
-      }),
-    })
-
-    const tokens = (await tokenRes.json()) as { access_token: string }
-
-    // Get user info
-    const userRes = await fetch('https://www.googleapis.com/oauth2/v2/userinfo', {
-      headers: { Authorization: `Bearer ${tokens.access_token}` },
-    })
-
-    const googleUser = (await userRes.json()) as {
-      id: string
-      email: string
-      name: string
-      picture: string
+    if (oauthError || !code) {
+      app.log.error({ oauthError }, 'Google OAuth error')
+      return reply.redirect(`${config.app.frontendUrl}/auth/callback?error=${oauthError ?? 'no_code'}`)
     }
 
-    // Upsert user
-    let [user] = await db.select().from(users).where(eq(users.googleId, googleUser.id))
+    try {
+      // Exchange code for tokens
+      const tokenRes = await fetch('https://oauth2.googleapis.com/token', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          code,
+          client_id: config.auth.googleClientId,
+          client_secret: config.auth.googleClientSecret,
+          redirect_uri: `${config.app.apiUrl}/api/auth/google/callback`,
+          grant_type: 'authorization_code',
+        }),
+      })
 
-    if (!user) {
-      ;[user] = await db
-        .insert(users)
-        .values({
-          email: googleUser.email,
-          name: googleUser.name,
-          avatarUrl: googleUser.picture,
-          googleId: googleUser.id,
-        })
-        .returning()
+      const tokenData = await tokenRes.json() as { access_token?: string; error?: string; error_description?: string }
+
+      if (!tokenData.access_token) {
+        app.log.error({ tokenData }, 'Google token exchange failed')
+        return reply.redirect(`${config.app.frontendUrl}/auth/callback?error=token_exchange_failed&details=${encodeURIComponent(tokenData.error_description ?? tokenData.error ?? 'unknown')}`)
+      }
+
+      // Get user info
+      const userRes = await fetch('https://www.googleapis.com/oauth2/v2/userinfo', {
+        headers: { Authorization: `Bearer ${tokenData.access_token}` },
+      })
+
+      const googleUser = (await userRes.json()) as {
+        id: string
+        email: string
+        name: string
+        picture: string
+      }
+
+      if (!googleUser.id) {
+        return reply.redirect(`${config.app.frontendUrl}/auth/callback?error=no_user_info`)
+      }
+
+      // Upsert user
+      let [user] = await db.select().from(users).where(eq(users.googleId, googleUser.id))
+
+      if (!user) {
+        ;[user] = await db
+          .insert(users)
+          .values({
+            email: googleUser.email,
+            name: googleUser.name,
+            avatarUrl: googleUser.picture,
+            googleId: googleUser.id,
+          })
+          .returning()
+      }
+
+      const jwt = app.jwt.sign({ userId: user.id, email: user.email }, { expiresIn: '7d' })
+
+      return reply.redirect(`${config.app.frontendUrl}/auth/callback?token=${jwt}`)
+    } catch (err) {
+      app.log.error({ err }, 'Google OAuth callback error')
+      return reply.redirect(`${config.app.frontendUrl}/auth/callback?error=server_error`)
     }
-
-    const jwt = app.jwt.sign({ userId: user.id, email: user.email }, { expiresIn: '7d' })
-
-    return reply.redirect(`${config.app.frontendUrl}/auth/callback?token=${jwt}`)
   })
 
   // Figma OAuth: redirect
