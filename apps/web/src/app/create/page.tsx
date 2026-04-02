@@ -99,19 +99,62 @@ export default function CreatePage() {
   const startGeneration = async () => {
     setStep(4)
     setIsDone(false)
-    const stages = [
-      { id: 'generating_text', progress: 20, delay: 800 },
-      { id: 'finding_photos', progress: 40, delay: 1200 },
-      { id: 'generating_images', progress: 65, delay: 1500 },
-      { id: 'creating_figma', progress: 90, delay: 1000 },
-      { id: 'completed', progress: 100, delay: 500 },
-    ]
-    for (const stage of stages) {
-      setGenerationStage(stage.id)
-      setGenerationProgress(stage.progress)
-      await new Promise((r) => setTimeout(r, stage.delay))
+    setError('')
+
+    try {
+      // Stage 1: Confirm text
+      setGenerationStage('generating_text')
+      setGenerationProgress(10)
+      await new Promise((r) => setTimeout(r, 500))
+
+      // Stage 2: Generate images via Nano Banana Pro
+      setGenerationStage('generating_images')
+      setGenerationProgress(20)
+
+      const slidesForApi = slides.filter((s) => !s.backgroundImage).map((s) => ({
+        index: s.index,
+        title: s.title,
+        body: s.body,
+        imageKeywords: s.imageKeywords,
+      }))
+
+      if (slidesForApi.length > 0) {
+        // Generate images for slides that don't have custom backgrounds
+        const imageResult = await api.generateImages({
+          slides: slidesForApi,
+          templateName: templateStyle.name,
+          referenceImage: referenceImage ?? undefined,
+        })
+
+        if (imageResult.success && imageResult.data) {
+          const updated = [...slides]
+          for (const result of imageResult.data) {
+            const idx = updated.findIndex((s) => s.index === result.index)
+            if (idx !== -1 && result.imageUrl && !updated[idx].backgroundImage) {
+              updated[idx] = { ...updated[idx], backgroundImage: result.imageUrl }
+            }
+          }
+          setSlides(updated)
+        }
+      }
+
+      // Stage 3: Compositing
+      setGenerationStage('creating_figma')
+      setGenerationProgress(90)
+      await new Promise((r) => setTimeout(r, 800))
+
+      // Done
+      setGenerationStage('completed')
+      setGenerationProgress(100)
+      setIsDone(true)
+    } catch (err) {
+      console.error('Generation error:', err)
+      setError(err instanceof Error ? err.message : 'Ошибка генерации изображений')
+      // Still show result with template backgrounds even if image gen fails
+      setGenerationStage('completed')
+      setGenerationProgress(100)
+      setIsDone(true)
     }
-    setIsDone(true)
   }
 
   const exportSlide = useCallback(async (index: number): Promise<Blob | null> => {

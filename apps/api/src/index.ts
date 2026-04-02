@@ -13,6 +13,14 @@ const app = Fastify({
   logger: {
     level: config.isDev ? 'debug' : 'info',
   },
+  bodyLimit: 10 * 1024 * 1024, // 10MB for reference images
+})
+
+// Increase timeout for image generation routes (5 min)
+app.addHook('onRequest', async (request) => {
+  if (request.url.startsWith('/api/generate/image')) {
+    request.raw.setTimeout(300000)
+  }
 })
 
 await app.register(cors, {

@@ -58,4 +58,17 @@ export const api = {
       method: 'POST',
       body: JSON.stringify(data),
     }),
+
+  generateImages: (data: {
+    slides: { index: number; title: string; body: string; imageKeywords?: string[] }[]
+    templateName?: string
+    referenceImage?: string
+  }) =>
+    request<{
+      success: boolean
+      data: { index: number; imageUrl: string | null; status: string }[]
+    }>('/api/generate/images', {
+      method: 'POST',
+      body: JSON.stringify(data),
+    }),
 }
