@@ -7,6 +7,7 @@ import { carouselRoutes } from './modules/carousel/routes.js'
 import { authRoutes } from './modules/auth/routes.js'
 import { billingRoutes } from './modules/billing/routes.js'
 import { templateRoutes } from './modules/carousel/template-routes.js'
+import { generateRoutes } from './modules/carousel/generate-routes.js'
 
 const app = Fastify({
   logger: {
@@ -15,7 +16,7 @@ const app = Fastify({
 })
 
 await app.register(cors, {
-  origin: config.app.frontendUrl,
+  origin: true,
   credentials: true,
 })
 
@@ -34,6 +35,7 @@ await app.register(authRoutes, { prefix: '/api/auth' })
 await app.register(carouselRoutes, { prefix: '/api/carousels' })
 await app.register(templateRoutes, { prefix: '/api/templates' })
 await app.register(billingRoutes, { prefix: '/api/billing' })
+await app.register(generateRoutes, { prefix: '/api/generate' })
 
 try {
   await app.listen({ port: config.port, host: '0.0.0.0' })

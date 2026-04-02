@@ -49,4 +49,13 @@ export const api = {
 
   getMe: () =>
     request<{ success: boolean; data: unknown }>('/api/auth/me'),
+
+  generateSlides: (data: { topic: string; slideCount: number; tone: string; language: string }) =>
+    request<{
+      success: boolean
+      data: { index: number; title: string; body: string; imageKeywords: string[] }[]
+    }>('/api/generate/slides', {
+      method: 'POST',
+      body: JSON.stringify(data),
+    }),
 }
