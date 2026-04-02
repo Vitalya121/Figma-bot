@@ -1,0 +1,6 @@
+{
+  "root": true,
+  "extends": ["eslint:recommended"],
+  "ignorePatterns": ["node_modules/", "dist/", ".next/", ".turbo/"],
+  "env": { "node": true, "es2024": true }
+}

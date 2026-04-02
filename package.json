@@ -1,0 +1,18 @@
+{
+  "name": "carousel-forge",
+  "private": true,
+  "packageManager": "pnpm@9.15.4",
+  "scripts": {
+    "dev": "turbo dev",
+    "build": "turbo build",
+    "lint": "turbo lint",
+    "type-check": "turbo type-check",
+    "clean": "turbo clean",
+    "db:migrate": "pnpm --filter @carousel-forge/api db:migrate",
+    "db:seed": "pnpm --filter @carousel-forge/api db:seed"
+  },
+  "devDependencies": {
+    "playwright": "^1.59.0",
+    "turbo": "^2.4.0"
+  }
+}
