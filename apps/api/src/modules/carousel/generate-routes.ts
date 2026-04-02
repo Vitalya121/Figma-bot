@@ -28,7 +28,7 @@ async function openRouterImage(content: object[]): Promise<string | null> {
   })
 
   if (!res.ok) {
-    console.error('Image generation failed:', res.status, await res.text().catch(() => ''))
+    console.error('Image generation failed:', res.status)
     return null
   }
 
@@ -41,11 +41,7 @@ async function openRouterImage(content: object[]): Promise<string | null> {
     }[]
   }
 
-  const msg = data.choices?.[0]?.message
-  if (msg?.images?.[0]?.image_url?.url) {
-    return msg.images[0].image_url.url
-  }
-  return null
+  return data.choices?.[0]?.message?.images?.[0]?.image_url?.url ?? null
 }
 
 const generateSlidesSchema = z.object({
@@ -101,7 +97,7 @@ Return ONLY a JSON array:
     }
   })
 
-  // Generate COMPLETE slide designs using Nano Banana Pro (Variant B)
+  // Hybrid: generate visual backgrounds WITHOUT text
   app.post('/images', async (request, reply) => {
     const body = generateImagesSchema.parse(request.body)
     const results: { index: number; imageUrl: string | null; status: string }[] = []
@@ -111,32 +107,32 @@ Return ONLY a JSON array:
       try {
         const isHook = slide.index === 1
         const isCta = slide.index === total
+        const keywords = slide.imageKeywords?.join(', ') ?? ''
 
-        const prompt = `Create a complete, ready-to-post Instagram carousel slide image (1080x1350 portrait).
+        const prompt = `Create a visual background image for an Instagram carousel slide (1080x1350 portrait).
 
-This is slide ${slide.index} of ${total}${isHook ? ' (FIRST SLIDE — HOOK, must grab attention)' : ''}${isCta ? ' (LAST SLIDE — CTA, call to action)' : ''}.
+Topic of the slide: "${slide.title}" — ${keywords}
+This is slide ${slide.index} of ${total}${isHook ? ' (first slide, must be eye-catching and bold)' : ''}${isCta ? ' (last slide, call to action vibe)' : ''}.
 
-TEXT TO INCLUDE ON THE SLIDE:
-Title: "${slide.title}"
-Body text: "${slide.body}"
-Slide number: ${slide.index}/${total}
+CRITICAL RULES:
+- DO NOT include ANY text, words, letters, numbers, or typography on the image
+- DO NOT write any titles, captions, labels, or watermarks
+- The image must be PURELY VISUAL — only graphics, illustrations, photos, shapes, colors
+- NO TEXT AT ALL — text will be added separately later
 
-DESIGN REQUIREMENTS:
-- Professional Instagram carousel design, modern 2026 style
-- Dark background (black/dark gray/deep color)
-- Title must be large, bold, high contrast, immediately readable
-- Body text smaller but clearly legible
-- Include relevant thematic graphics, icons, or illustrations related to the topic
-- Add subtle decorative elements (geometric shapes, gradients, glows)
-- Slide number "${slide.index}/${total}" in bottom-right corner
-- Clean typography, good visual hierarchy
-- The text on the image MUST be exactly as written above, no changes, no extra text
-- All text must be in the same language as provided above
-- DO NOT add any text that is not specified above`
+VISUAL REQUIREMENTS:
+- Professional Instagram design, modern 2026 aesthetic
+- Dark background (black, dark gray, deep navy, or deep purple)
+- Include relevant thematic illustrations, icons, graphics, or abstract shapes related to "${slide.title}"
+- Rich visual composition: gradients, glows, geometric elements, depth
+- Leave clear space in the upper portion for title text overlay (about top 40% of image)
+- Leave space in the middle for body text overlay
+- Bottom area can have decorative elements
+- High contrast areas where text will go (dark enough for white text to be readable)
+- Visually engaging but not cluttered — serves as a background for text`
 
         const content: object[] = []
 
-        // If reference image provided, include it for style matching
         if (body.referenceImage) {
           content.push({
             type: 'image_url',
@@ -144,7 +140,7 @@ DESIGN REQUIREMENTS:
           })
           content.push({
             type: 'text',
-            text: `Use the attached image as a STYLE REFERENCE. Match the visual style, color scheme, layout approach, typography style, and overall aesthetic. Create a new slide with this exact style but with the following content:\n\n${prompt}`,
+            text: `Look at this reference image for VISUAL STYLE ONLY (colors, composition, mood, graphic style). Create a NEW background image matching this visual aesthetic. IMPORTANT: Do NOT copy any text from the reference. Generate ONLY the visual/graphic elements.\n\n${prompt}`,
           })
         } else {
           content.push({ type: 'text', text: prompt })
@@ -167,7 +163,7 @@ DESIGN REQUIREMENTS:
     return { success: true, data: results }
   })
 
-  // Generate a single slide image
+  // Regenerate single slide background
   app.post('/image', async (request, reply) => {
     const body = z.object({
       slideIndex: z.number(),
@@ -178,17 +174,18 @@ DESIGN REQUIREMENTS:
     }).parse(request.body)
 
     try {
-      const prompt = `Create a complete, ready-to-post Instagram carousel slide image (1080x1350 portrait).
+      const prompt = `Create a visual background image for an Instagram carousel slide (1080x1350 portrait).
+Topic: "${body.title}"
 Slide ${body.slideIndex} of ${body.totalSlides}.
-Title: "${body.title}"
-Body: "${body.bodyText}"
-Number: ${body.slideIndex}/${body.totalSlides}
-Dark background, modern 2026 design, clean typography, thematic graphics. Text must be exactly as specified.`
+
+DO NOT include ANY text, words, or typography. PURELY VISUAL — graphics, illustrations, shapes only.
+Dark background, modern 2026 design, thematic graphics related to the topic.
+Leave space for text overlay in the upper and middle portions.`
 
       const content: object[] = []
       if (body.referenceImage) {
         content.push({ type: 'image_url', image_url: { url: body.referenceImage } })
-        content.push({ type: 'text', text: `Match the visual style of this reference image. ${prompt}` })
+        content.push({ type: 'text', text: `Match the visual style (colors, mood, graphic style) of this reference. NO TEXT on the image.\n\n${prompt}` })
       } else {
         content.push({ type: 'text', text: prompt })
       }

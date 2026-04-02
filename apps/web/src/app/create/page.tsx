@@ -4,6 +4,7 @@ import { useState, useRef } from 'react'
 import { ArrowLeft, ArrowRight, Loader2, Download, RefreshCw, Upload, X, Image as ImageIcon, Copy, Check, ChevronLeft, ChevronRight, FileDown } from 'lucide-react'
 import { SlideEditor } from '@/components/slide-editor'
 import { GenerationProgress } from '@/components/generation-progress'
+import { SlideComposite } from '@/components/slide-composite'
 import { cn } from '@/lib/utils'
 import { api } from '@/lib/api'
 
@@ -35,6 +36,7 @@ export default function CreatePage() {
   const [activeSlide, setActiveSlide] = useState(0)
   const [regeneratingSlide, setRegeneratingSlide] = useState<number | null>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
+  const compositeRefs = useRef<(HTMLDivElement | null)[]>([])
 
   const generateText = async () => {
     setIsGenerating(true)
@@ -154,11 +156,19 @@ export default function CreatePage() {
     }
   }
 
-  const downloadSlide = (index: number) => {
-    const slide = slides[index]
-    if (!slide?.generatedImage) return
+  const exportComposite = async (index: number): Promise<Blob | null> => {
+    const { toPng } = await import('html-to-image')
+    const el = compositeRefs.current[index]
+    if (!el) return null
+    const dataUrl = await toPng(el, { width: 1080, height: 1350, pixelRatio: 1 })
+    return (await fetch(dataUrl)).blob()
+  }
+
+  const downloadSlide = async (index: number) => {
+    const blob = await exportComposite(index)
+    if (!blob) return
     const a = document.createElement('a')
-    a.href = slide.generatedImage
+    a.href = URL.createObjectURL(blob)
     a.download = `slide-${index + 1}.png`
     a.click()
   }
@@ -168,12 +178,9 @@ export default function CreatePage() {
     try {
       const JSZip = (await import('jszip')).default
       const zip = new JSZip()
-      for (const slide of slides) {
-        if (slide.generatedImage) {
-          const res = await fetch(slide.generatedImage)
-          const blob = await res.blob()
-          zip.file(`slide-${slide.index}.png`, blob)
-        }
+      for (let i = 0; i < slides.length; i++) {
+        const blob = await exportComposite(i)
+        if (blob) zip.file(`slide-${i + 1}.png`, blob)
       }
       const content = await zip.generateAsync({ type: 'blob' })
       const a = document.createElement('a')
@@ -365,7 +372,16 @@ export default function CreatePage() {
                   {slides.map((slide, i) => (
                     <div key={i} className="flex-shrink-0 w-20 aspect-[4/5] rounded-lg overflow-hidden border border-border bg-surface-lighter">
                       {slide.generatedImage ? (
-                        <img src={slide.generatedImage} alt={`Slide ${i + 1}`} className="w-full h-full object-cover" />
+                        <div style={{ width: 80, height: 100, overflow: 'hidden' }}>
+                          <SlideComposite
+                            backgroundImage={slide.generatedImage}
+                            title={slide.title}
+                            body=""
+                            slideIndex={slide.index}
+                            totalSlides={slides.length}
+                            scale={80 / 1080}
+                          />
+                        </div>
                       ) : (
                         <div className="w-full h-full flex items-center justify-center">
                           <Loader2 className="w-4 h-4 animate-spin text-text-muted/30" />
@@ -394,17 +410,17 @@ export default function CreatePage() {
                   </div>
                 </div>
 
-                {/* Active slide */}
+                {/* Active slide — composite preview */}
                 <div className="flex justify-center">
-                  <div className="relative" style={{ width: 360, height: 450 }}>
-                    {slides[activeSlide]?.generatedImage ? (
-                      <img src={slides[activeSlide].generatedImage} alt={`Slide ${activeSlide + 1}`}
-                        className="w-full h-full object-cover rounded-xl shadow-2xl" />
-                    ) : (
-                      <div className="w-full h-full rounded-xl bg-surface-lighter flex items-center justify-center">
-                        <span className="text-text-muted text-sm">Не удалось сгенерировать</span>
-                      </div>
-                    )}
+                  <div style={{ width: 360, height: 450, overflow: 'hidden', borderRadius: 12 }} className="shadow-2xl">
+                    <SlideComposite
+                      backgroundImage={slides[activeSlide]?.generatedImage}
+                      title={slides[activeSlide]?.title ?? ''}
+                      body={slides[activeSlide]?.body ?? ''}
+                      slideIndex={slides[activeSlide]?.index ?? 1}
+                      totalSlides={slides.length}
+                      scale={360 / 1080}
+                    />
                   </div>
                 </div>
 
@@ -414,11 +430,16 @@ export default function CreatePage() {
                     <button key={i} onClick={() => setActiveSlide(i)}
                       className={cn('flex-shrink-0 rounded-lg overflow-hidden border-2 transition-all',
                         i === activeSlide ? 'border-primary' : 'border-transparent opacity-50 hover:opacity-80')}>
-                      {slide.generatedImage ? (
-                        <img src={slide.generatedImage} alt="" className="w-14 h-[70px] object-cover" />
-                      ) : (
-                        <div className="w-14 h-[70px] bg-surface-lighter flex items-center justify-center text-text-muted/30 text-xs">{i + 1}</div>
-                      )}
+                      <div style={{ width: 54, height: 67, overflow: 'hidden' }}>
+                        <SlideComposite
+                          backgroundImage={slide.generatedImage}
+                          title={slide.title}
+                          body={slide.body}
+                          slideIndex={slide.index}
+                          totalSlides={slides.length}
+                          scale={54 / 1080}
+                        />
+                      </div>
                     </button>
                   ))}
                 </div>
@@ -435,6 +456,22 @@ export default function CreatePage() {
                     Перегенерировать
                   </button>
                 </div>
+              </div>
+
+              {/* Hidden full-size composites for PNG export */}
+              <div style={{ position: 'absolute', left: '-9999px', top: 0 }}>
+                {slides.map((slide, i) => (
+                  <SlideComposite
+                    key={i}
+                    ref={(el) => { compositeRefs.current[i] = el }}
+                    backgroundImage={slide.generatedImage}
+                    title={slide.title}
+                    body={slide.body}
+                    slideIndex={slide.index}
+                    totalSlides={slides.length}
+                    scale={1}
+                  />
+                ))}
               </div>
 
               {/* Export actions */}
